@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Addon Author="Virag" APIVersion="10" Name="ViragsSocial" Description="Redesigg and impove Social interface" Version="">
+<Addon Author="Virag1" APIVersion="10" Name="ViragsSocial" Description="Redesigg and impove Social interface" Version="">
+    <Script Name="Libs\LibJSON\LibJSON-2.5.lua"/>
     <Script Name="ViragsSocial.lua"/>
     <Script Name="ViragsSocialArrays.lua"/>
     <Script Name="ViragsSocialNet.lua"/>
