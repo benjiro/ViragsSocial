@@ -10,7 +10,6 @@ require"Window"
 require"HousingLib"
 require"FriendshipLib"
 require"GameLib"
-require"ICCommLib"
 require"PlayerPathLib"
 require"CraftingLib"
 
@@ -32,13 +31,13 @@ function ViragsSocial:new(o)
     setmetatable(o, self)
     self.__index = self
     self.kbDEBUG = false
-    self.ADDON_VERSION = 0.387
+    self.kbNetworkLoop = true
+    self.ADDON_VERSION = 0.4
     self.kUNDEFINED = -1
     self.tWndRefs = {}
     self.tWndRefsSmall = {}
     self.tWndRefsBig = {}
     self.tWndOptionsRefs = {}
-
 
     self.tSettings = {}
 
@@ -310,10 +309,12 @@ function ViragsSocial:Setup()
     self:InitSortFns()
     self:FixCarbineAddons()
 
-    self:JoinICCommLibChannels()
+    Apollo.RegisterTimerHandler("SetupComms", "InitComm", self)
+    Apollo.CreateTimer("SetupComms", 5.000, false)
+    Apollo.StartTimer("SetupComms")
 
     Apollo.RegisterTimerHandler("FirstBroadcastUpdateTimer", "BroadcastUpdate", self)
-    Apollo.CreateTimer("FirstBroadcastUpdateTimer", 5.000, false)
+    Apollo.CreateTimer("FirstBroadcastUpdateTimer", 10.000, false)
     Apollo.StartTimer("FirstBroadcastUpdateTimer")
 
     self:UpdateSideBar()

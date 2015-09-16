@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Addon Author="Virag1" APIVersion="10" Name="ViragsSocial" Description="Redesigg and impove Social interface" Version="">
+<Addon Author="Virag & Benjiro" APIVersion="10" Name="ViragsSocial" Description="Improved Social Interface" Version="0.4">
     <Script Name="Libs\LibJSON\LibJSON-2.5.lua"/>
     <Script Name="ViragsSocial.lua"/>
     <Script Name="ViragsSocialArrays.lua"/>
@@ -15,12 +15,9 @@
     <Script Name="ViragsSocialNotifications.lua"/>
     <Script Name="ViragsSocialGlobalChat.lua"/>
     <Script Name="ViragsSocialTabListView.lua"/>
+
     <Form Name="ViragsSocial.xml"/>
 
-    <!--
-    <Script Name="ViragsSoundPickerLib/ViragsSoundPicker.lua"/>
-    <Form Name="ViragsSoundPickerLib/ViragsSoundPicker.xml"/>
-    -->
     <ReplaceAddon Name="Circles"/>
     <ReplaceAddon Name="GuildAlerts"/>
     <ReplaceAddon Name="FriendsList"/>

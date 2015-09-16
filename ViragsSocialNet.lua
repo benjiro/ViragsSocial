@@ -1,12 +1,12 @@
-require "ICCommLib"
 require "ICComm"
+require "Apollo"
 require "ApolloTimer"
 
 -----------------------------------------------------------------------------------------------
 -- ViragsSocial Broadcasting
 -----------------------------------------------------------------------------------------------
 local ViragsSocial = Apollo.GetAddon("ViragsSocial")
-local JSON = Apollo.GetPackage("Lib:dkJSON-2.5").tPackage
+local JSON
 local List = {}
 
 ViragsSocial.ICCommLib_PROTOCOL_VERSION = 0.001
@@ -18,44 +18,94 @@ ViragsSocial.MSG_CODES = {
 
 }
 
-function ViragsSocial:JoinICCommLibChannels()
+function ViragsSocial:InitComm()
     if self.tSettings.bDisableNetwork then return end
-    self.DEBUG("JoinICCommLibChannels()")
+
+    self:DEBUG("InitComm()")
+
+    JSON = Apollo.GetPackage("Lib:dkJSON-2.5").tPackage
     local arGuilds = GuildLib.GetGuilds()
 
     if arGuilds == nil then return end
 
-    if self.InfoChannels == nil then self.InfoChannels = {} end
+    self.InfoChannels = {}
 
-    for key, guildCurr in pairs(arGuilds) do
-        local guildName = guildCurr:GetName()
-        if guildName and (guildCurr:GetType() == GuildLib.GuildType_Circle
-                or guildCurr:GetType() == GuildLib.GuildType_Guild) then
-            local chanelName = "ViragSocial" .. guildName
-
-            if self.InfoChannels[guildName] == nil then
-                self.DEBUG("Join " .. chanelName)
-                self.InfoChannels[guildName] = ICCommLib.JoinChannel(chanelName, ICCommLib.CodeEnumICCommChannelType.Group) --"OnBroadcastReceived", self)
-                self.channelTimer = ApolloTimer.Create(1, true, "SetICCommCallback", self)
-            end
+    for key, current in pairs(arGuilds) do
+        local guildName = current:GetName()
+        self:DEBUG("Setting up " .. guildName)
+        if guildName and (current:GetType() == GuildLib.GuildType_Guild
+                     or   current:GetType() == GuildLib.GuildType_Circle) then
+            self:JoinChannel(guildName, current)
         end
     end
 end
 
-function ViragsSocial:SetICCommCallback()
-    if not self.channel then
-        self.channel = ICCommLib.JoinChannel("ViragSocial", ICCommLib.CodeEnumICCommChannelType.Group)
-    end
-    if self.channel:IsReady() then
-        self.channel:SetReceivedMessageFunction("OnBroadcastReceived", self)
-        self.channelTimer = nil
+function ViragsSocial:JoinChannel(channelName, guild, tries)
+    tries = tries or 3
+
+    local newChannel = ICCommLib.JoinChannel("ViragsSocial" .. channelName, ICCommLib.CodeEnumICCommChannelType.Guild, guild)
+    newChannel:SetJoinResultFunction("OnChannelJoin", self)
+
+    if newChannel:IsReady() then
+        newChannel:SetSendMessageResultFunction("OnMessageSent", self)
+        newChannel:SetReceivedMessageFunction("OnMessageReceived", self)
+        self.InfoChannels[channelName] = newChannel
+    elseif tries > 0 then
+        self:DEBUG("Retrying " .. tries)
+        self:JoinChannel(channelName, guild, tries - 1)
+    else
+        self:DEBUG("Failed to join " .. channelName)
     end
 end
 
+function ViragsSocial:OnMessageSent(iccomm, eResult, idMessage)
+    self:DEBUG("Message[" .. idMessage .. "] = " .. self:GetResult(eResult))
+end
 
---SEND MSG_CODES["UPDATE_FOR_ALL"] 
+function ViragsSocial:OnMessageReceived(channel, msg, sSender)
+  self:DEBUG("Received message from " .. channel:GetName())
+  self:DEBUG("Message: " .. msg)
+
+  local decoded = JSON.decode(msg)
+
+  if self.MSG_CODES["REQUEST_INFO"] == decoded.MSG_CODE then
+      self:BroadcastToTarget(channel, decoded.name)
+      return
+  end
+
+  if not self:isUpToDateVersion(decoded) then return end
+
+  local bNeedUpdateGrid = false
+
+  if self.MSG_CODES["UPDATE_FOR_TARGET"] == decoded.MSG_CODE then
+      bNeedUpdateGrid = decoded.target == self.kMyID
+  elseif self.MSG_CODES["UPDATE_FOR_ALL"] == decoded.MSG_CODE then
+      bNeedUpdateGrid = true
+  end
+
+  if bNeedUpdateGrid and self:ValidateBroadcast(decoded) then
+      self.ktPlayerInfoDB[decoded.name] = decoded
+      self:UpdateGrid(false, false)
+  end
+end
+
+function ViragsSocial:OnChannelJoin(channel, eResult)
+    self:DEBUG("Joined " .. channel:GetName() .. "[" .. self:GetResult(eResult) .. "]")
+end
+
+function ViragsSocial:GetResult(eResult)
+    local sResult = tostring(eResult)
+
+    for stext, key in next, ICCommLib.CodeEnumICCommMessageResult do
+        if eResult == key then
+            return stext
+        end
+    end
+    return "Unknown Error"
+end
+
+--SEND MSG_CODES["UPDATE_FOR_ALL"]
 function ViragsSocial:BroadcastUpdate()
-
     if self.InfoChannels then
         for key, channel in pairs(self.InfoChannels) do
             self:AddToBroadcastQueue(channel, self.MSG_CODES["UPDATE_FOR_ALL"], nil)
@@ -76,19 +126,17 @@ function ViragsSocial:BroadcastRequestInfo()
 end
 
 --SEND MSG_CODES["UPDATE_FOR_TARGET"]
-function ViragsSocial:BroadcastToTarget(chanell, target)
-
-    if target and chanell then
-        self:AddToBroadcastQueue(chanell, self.MSG_CODES["UPDATE_FOR_TARGET"], target)
+function ViragsSocial:BroadcastToTarget(channel, target)
+    if target and channel then
+        self:AddToBroadcastQueue(channel, self.MSG_CODES["UPDATE_FOR_TARGET"], target)
     end
 end
 
-function ViragsSocial:AddToBroadcastQueue(chanell, code, target)
-
+function ViragsSocial:AddToBroadcastQueue(channel, code, target)
     if code == self.MSG_CODES["REQUEST_INFO"]
             or code == self.MSG_CODES["UPDATE_FOR_TARGET"]
             or code == self.MSG_CODES["UPDATE_FOR_ALL"] then
-        local queueValue = { tChanell = chanell, nCode = code, strTarget = target }
+        local queueValue = { tChannel = channel, nCode = code, strTarget = target }
 
         if self.msgQueue == nil then
             self.msgQueue = List.new()
@@ -100,7 +148,6 @@ function ViragsSocial:AddToBroadcastQueue(chanell, code, target)
 end
 
 function ViragsSocial:StartBroadcastFromQueue()
-
     if self.kMyID == nil or self.kbNeedUpdateMyInfo then
         self:UpdateMyInfo()
         if self.kMyID == nil or self.kbNeedUpdateMyInfo then --fail
@@ -110,32 +157,16 @@ function ViragsSocial:StartBroadcastFromQueue()
         self:UpdateGrid(false, false)
     end
 
-
     local v = List.popright(self.msgQueue)
 
-    if v then self:Broadcast(v.tChanell, self.ktPlayerInfoDB[self.kMyID], v.nCode, v.strTarget) end
+    if v then self:Broadcast(v.tChannel, self.ktPlayerInfoDB[self.kMyID], v.nCode, v.strTarget) end
 
     if List.hasmore(self.msgQueue) then Apollo.StartTimer("BroadcastUpdateTimer") end
 end
 
 -- SEND
-function ViragsSocial:Broadcast(chanell, msg, code, target)
-
-    if self:ValidateBroadcast(msg) and chanell and code then
-
-        if self.kbDEBUG then
-            local strTarget = ""
-            if target then strTarget = " to " .. target end
-
-            local strCode = "REQUEST_INFO"
-            if code == self.MSG_CODES["UPDATE_FOR_TARGET"] then                 strCode = "UPDATE_FOR_TARGET"
-            elseif code == self.MSG_CODES["UPDATE_FOR_ALL"] then                 strCode = "UPDATE_FOR_ALL"
-            end
-
-            self:DEBUG("Broadcsting " .. strCode .. strTarget)
-            self:DEBUG("Broadcast() " .. strCode .. strTarget, msg)
-            self:DEBUG("self.ktPlayerInfoDB", self.ktPlayerInfoDB)
-        end --debug end
+function ViragsSocial:Broadcast(channel, msg, code, target)
+    if self:ValidateBroadcast(msg) and channel and code then
 
         if code == self.MSG_CODES["UPDATE_FOR_ALL"] then
             self.knMyLastUpdate = self:HelperServerTime()
@@ -159,61 +190,21 @@ function ViragsSocial:Broadcast(chanell, msg, code, target)
         msg.target = target
         msg.MSG_CODE = code
 
-        chanell:SendMessage(JSON.encode(msg))
-
+        channel:SendMessage(JSON.encode(msg))
     end
 end
 
---RECEIVE
-function ViragsSocial:OnBroadcastReceived(chanell, msg_encoded)
-    local msg = JSON.decode(msg_encoded)
-
-    if msg == nil or msg.name == nil or type(msg) ~= "table" then return end
-
-    self:DEBUG("self.ktPlayerInfoDB", self.ktPlayerInfoDB)
-
-    if self.MSG_CODES["REQUEST_INFO"] == msg.MSG_CODE then
-        --if msg.onlineTime ~= nil then
-        --dont send anything if he already has some update from you
-        --	if msg.onlineTime < self.knMyLastUpdate then
-        --	return end
-        --end buggy, DOESNT WORK AS INTENDET
-
-        self:DEBUG("OBR REQUEST_INFO from " .. msg.name)
-        self:DEBUG("OnBroadcastReceived() " .. msg.MSG_CODE, msg)
-        self:DEBUG("OnBroadcastReceived() chanell", chanell)
-        self:DEBUG("self.ktPlayerInfoDB", self.ktPlayerInfoDB)
-
-        self:BroadcastToTarget(chanell, msg.name)
-        return
-    end
-    if self.tSettings.bDisableNetwork then return end
-
-    if not self:isUpToDateVersion(msg) then return end
-
-    local bNeedUpdateGrid = false
-
-    if self.MSG_CODES["UPDATE_FOR_TARGET"] == msg.MSG_CODE then
-        bNeedUpdateGrid = msg.target == self.kMyID
-
-        self:DEBUG("OBR UPDATE_FOR_TARGET " .. msg.target .. " from " .. msg.name)
-        self:DEBUG("OnBroadcastReceived() " .. msg.MSG_CODE, msg)
-        self:DEBUG("OnBroadcastReceived() chanell", chanell)
-        self:DEBUG("self.ktPlayerInfoDB", self.ktPlayerInfoDB)
-    elseif self.MSG_CODES["UPDATE_FOR_ALL"] == msg.MSG_CODE then
-        bNeedUpdateGrid = true
-
-        self:DEBUG("OBR UPDATE_FOR_ALL from " .. msg.name)
-        self:DEBUG("OnBroadcastReceived() " .. msg.MSG_CODE, msg)
-        self:DEBUG("OnBroadcastReceived() chanell", chanell)
-        self:DEBUG("self.ktPlayerInfoDB", self.ktPlayerInfoDB)
-    end
-
-    if bNeedUpdateGrid and self:ValidateBroadcast(msg) then
-        self.ktPlayerInfoDB[msg.name] = msg
-        self:UpdateGrid(false, false)
-    end
-end
+-------OLD CODE-----
+--function ViragsSocial:SetICCommCallback()
+--    if not self.channel then
+--        self.channel = ICCommLib.JoinChannel("ViragSocial", ICCommLib.CodeEnumICCommChannelType.Group)
+--    end
+--    if self.channel:IsReady() then
+--        self.channel:SetSendMessageResultFunction("OnBroadcastSent", self)
+--        self.channel:SetReceivedMessageFunction("OnBroadcastReceived", self)
+--        self.channelTimer = nil
+--    end
+--end
 
 function ViragsSocial:HelperServerTime()
     local tTime = GameLib.GetServerTime()
