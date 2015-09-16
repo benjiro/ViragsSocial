@@ -1,16 +1,10 @@
 require "ICComm"
-require "Apollo"
-require "ApolloTimer"
 
------------------------------------------------------------------------------------------------
--- ViragsSocial Broadcasting
------------------------------------------------------------------------------------------------
 local ViragsSocial = Apollo.GetAddon("ViragsSocial")
 local JSON
-local List = {}
+local Queue = {}
 
 ViragsSocial.ICCommLib_PROTOCOL_VERSION = 0.001
-
 ViragsSocial.MSG_CODES = {
     ["REQUEST_INFO"] = 1,
     ["UPDATE_FOR_TARGET"] = 2,
@@ -19,9 +13,7 @@ ViragsSocial.MSG_CODES = {
 }
 
 function ViragsSocial:InitComm()
-    if self.tSettings.bDisableNetwork then return end
-
-    self:DEBUG("InitComm()")
+    self:DEBUG("Initalisating communication module")
 
     JSON = Apollo.GetPackage("Lib:dkJSON-2.5").tPackage
     local arGuilds = GuildLib.GetGuilds()
@@ -29,6 +21,7 @@ function ViragsSocial:InitComm()
     if arGuilds == nil then return end
 
     self.InfoChannels = {}
+    self.msgQueue = Queue:new()
 
     for key, current in pairs(arGuilds) do
         local guildName = current:GetName()
@@ -43,7 +36,8 @@ end
 function ViragsSocial:JoinChannel(channelName, guild, tries)
     tries = tries or 3
 
-    local newChannel = ICCommLib.JoinChannel("ViragsSocial" .. channelName, ICCommLib.CodeEnumICCommChannelType.Guild, guild)
+    local newChannel = ICCommLib.JoinChannel("ViragsSocial" .. channelName,
+        ICCommLib.CodeEnumICCommChannelType.Guild, guild)
     newChannel:SetJoinResultFunction("OnChannelJoin", self)
 
     if newChannel:IsReady() then
@@ -115,7 +109,6 @@ end
 
 --SEND MSG_CODES["REQUEST_INFO"]
 function ViragsSocial:BroadcastRequestInfo()
-
     if self.kbCanRequestFullUpdateBroadcast and self.InfoChannels then
         self.kbCanRequestFullUpdateBroadcast = false
 
@@ -138,11 +131,7 @@ function ViragsSocial:AddToBroadcastQueue(channel, code, target)
             or code == self.MSG_CODES["UPDATE_FOR_ALL"] then
         local queueValue = { tChannel = channel, nCode = code, strTarget = target }
 
-        if self.msgQueue == nil then
-            self.msgQueue = List.new()
-        end
-
-        List.pushleft(self.msgQueue, queueValue)
+        self.msgQueue:Push(queueValue)
         Apollo.StartTimer("BroadcastUpdateTimer")
     end
 end
@@ -157,11 +146,11 @@ function ViragsSocial:StartBroadcastFromQueue()
         self:UpdateGrid(false, false)
     end
 
-    local v = List.popright(self.msgQueue)
+    local v = self.msgQueue:Pop()
 
     if v then self:Broadcast(v.tChannel, self.ktPlayerInfoDB[self.kMyID], v.nCode, v.strTarget) end
 
-    if List.hasmore(self.msgQueue) then Apollo.StartTimer("BroadcastUpdateTimer") end
+    if self.msgQueue:GetSize() > 0 then Apollo.StartTimer("BroadcastUpdateTimer") end
 end
 
 -- SEND
@@ -176,35 +165,12 @@ function ViragsSocial:Broadcast(channel, msg, code, target)
             self.ktPlayerInfoDB[self.kMyID].onlineTime = self:HelperServerTime()
         end
 
-        if self.tSettings.bDisableNetwork then
-            local newMsg = {}
-            newMsg.version = self.ICCommLib_PROTOCOL_VERSION
-            newMsg.addonVersion = self.ADDON_VERSION
-            newMsg.name = msg.name
-            newMsg.level = msg.level
-            newMsg.class = msg.class
-            newMsg.path = msg.path
-            msg = newMsg
-        end
-
         msg.target = target
         msg.MSG_CODE = code
 
         channel:SendMessage(JSON.encode(msg))
     end
 end
-
--------OLD CODE-----
---function ViragsSocial:SetICCommCallback()
---    if not self.channel then
---        self.channel = ICCommLib.JoinChannel("ViragSocial", ICCommLib.CodeEnumICCommChannelType.Group)
---    end
---    if self.channel:IsReady() then
---        self.channel:SetSendMessageResultFunction("OnBroadcastSent", self)
---        self.channel:SetReceivedMessageFunction("OnBroadcastReceived", self)
---        self.channelTimer = nil
---    end
---end
 
 function ViragsSocial:HelperServerTime()
     local tTime = GameLib.GetServerTime()
@@ -217,7 +183,6 @@ function ViragsSocial:HelperServerTime()
     tTime.isdst = false
     return os.time(tTime)
 end
-
 
 --VALIDATE (version check)
 function ViragsSocial:isUpToDateVersion(msg)
@@ -239,46 +204,31 @@ end
 
 --VALIDATE
 function ViragsSocial:ValidateBroadcast(msg)
-    return msg and type(msg) == "table" and msg.name ~= nil -- todo validation
+    return msg and type(msg) == "table" and msg.name ~= nil
 end
 
-
-
--- QUEUE from http://stackoverflow.com/questions/18843610/fast-implementation-of-queues-in-lua or  Programming in Lua
-function List.new()
-    return { first = 0, last = -1 }
+function Queue:new()
+    local o = { first = 0, last = -1 }
+    setmetatable(o, self)
+    self.__index = self
+    return o
 end
 
-function List.hasmore(list)
-    return list.first <= list.last
+function Queue:Push(value)
+    local last = self.last + 1
+    self.last = last
+    self[last] = value
 end
 
-function List.pushleft(list, value)
-    local first = list.first - 1
-    list.first = first
-    list[first] = value
-end
-
-function List.pushright(list, value)
-    local last = list.last + 1
-    list.last = last
-    list[last] = value
-end
-
-function List.popleft(list)
-    local first = list.first
-    if first > list.last then return nil end -- error("list is empty")
-    local value = list[first]
-    list[first] = nil -- to allow garbage collection
-    list.first = first + 1
+function Queue:Pop()
+    local first = self.first
+    if first > self.last then self:DEBUG("Queue is empty") end
+    local value = self[first]
+    self[first] = nil
+    self.first = first + 1
     return value
 end
 
-function List.popright(list)
-    local last = list.last
-    if list.first > last then return nil end -- error("list is empty")
-    local value = list[last]
-    list[last] = nil -- to allow garbage collection
-    list.last = last - 1
-    return value
+function Queue:GetSize()
+    return self.last - self.first + 1
 end

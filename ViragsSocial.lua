@@ -31,7 +31,6 @@ function ViragsSocial:new(o)
     setmetatable(o, self)
     self.__index = self
     self.kbDEBUG = false
-    self.kbNetworkLoop = true
     self.ADDON_VERSION = 0.4
     self.kUNDEFINED = -1
     self.tWndRefs = {}
